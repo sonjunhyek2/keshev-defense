@@ -1018,7 +1018,6 @@ export function createStudentView() {
 
       return root;
     },
-    renderVulnerabilities() { return '학생 구현 대기: 정확한 설치 버전·OSV 출처·조회 시각·부분 결과·조회 실패를 구분하세요.'; },
     renderAiConnection({ status, mode, data, error, checkedAt, explanationAccepted } = {}) {
       const root = document.createElement('div');
       root.className = 'student-ai-connection-container';
@@ -1464,6 +1463,50 @@ export function createStudentView() {
         if (receipt?.requestId) root.setAttribute('data-student-action-request', receipt.requestId);
       }
       line('버튼 조작은 제공 화면에서 직접 진행하세요. 학생 표시는 조치를 실행하지 않습니다.');
+      return root;
+    },
+    renderVulnerabilities({ status = 'idle', mode, data, error } = {}) {
+      const root = document.createElement('div');
+      const line = (text, parent = root) => {
+        const p = document.createElement('p');
+        p.textContent = text;
+        parent.appendChild(p);
+      };
+      const badge = renderModeBadge(mode);
+      if (badge) root.appendChild(badge);
+      if (status === 'idle') { line('설치 패키지 조회 전(idle).'); return root; }
+      if (status === 'loading') { line('설치 패키지 조회 중(loading).'); return root; }
+      if (status === 'error') {
+        root.setAttribute('data-student-error', error?.code || 'UNKNOWN');
+        line(`패키지 조회 실패: ${error?.message || '확인 불가'} (${error?.code || '확인 불가'})`);
+        line('조회 실패는 취약점 없음이 아닙니다. 제공 화면에서 직접 다시 조회하세요.');
+        return root;
+      }
+      const overall = {
+        complete: '모두 조회', partial: '일부 조회 실패', not_checked: '아직 조회 안 함',
+        not_configured: '조회 준비 미완료', unverifiable: 'lock 파일 확인 불가'
+      };
+      line(`${overall[data?.status] || '조회 확인 불가'} (${data?.status || 'unknown'})`);
+      line(`잠금 버전: ${data?.lockfileVersion ?? '확인 불가'}`);
+      line(`잠금 해시: ${data?.lockfileHash ?? '확인 불가'}`);
+      line(`조회 시각: ${data?.checkedAt ?? '확인 불가'}`);
+      const packages = Array.isArray(data?.packages) ? data.packages : [];
+      if (!packages.length) line('표시할 설치 패키지가 없습니다. 전체 조회 상태를 확인하세요.');
+      for (const pkg of packages) {
+        const row = document.createElement('section');
+        row.setAttribute('data-student-package-name', pkg.name ?? '확인 불가');
+        row.setAttribute('data-student-package-version', pkg.version ?? '확인 불가');
+        const labels = { known_vulnerabilities: '알려진 항목 있음', none_found: '알려진 항목 없음', unverifiable: '조회 확인 불가', not_checked: '아직 조회 안 함' };
+        line(`${pkg.name ?? '확인 불가'}@${pkg.version ?? '확인 불가'} · ${labels[pkg.status] || '조회 확인 불가'} (${pkg.status ?? 'unknown'})`, row);
+        line(`출처: ${pkg.source ?? '확인 불가'} · 조회 시각: ${pkg.checkedAt ?? '확인 불가'}`, row);
+        const vulnerabilities = Array.isArray(pkg.vulnerabilities) ? pkg.vulnerabilities : [];
+        if (pkg.status === 'unverifiable' && vulnerabilities.length) line('일부 확인 · 전체 조회 확인 불가', row);
+        for (const vulnerability of vulnerabilities) {
+          line(`취약점 ID: ${vulnerability.id ?? '확인 불가'} · 수정 시각: ${vulnerability.modified ?? '확인 불가'}`, row);
+        }
+        root.appendChild(row);
+      }
+      line('조회 실패·미조회·확인 불가는 취약점 없음이 아닙니다. 알려진 항목이 없어도 안전을 보증하지 않습니다.');
       return root;
     },
   };
