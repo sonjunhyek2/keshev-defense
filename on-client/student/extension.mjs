@@ -1160,27 +1160,16 @@ export function createStudentView() {
       const root = document.createElement('div');
       root.className = 'student-explanation-container';
 
-      if (!event) {
-        const p = document.createElement('p');
-        p.className = 'student-empty muted';
-        p.textContent = '선택된 보안 기록이 없습니다. 보안 기록 목록에서 기록을 먼저 선택하세요.';
-        root.appendChild(p);
-        return root;
-      }
-
-      const status = explanation?.status;
-
-      if (status === 'loading') {
-        const p = document.createElement('p');
-        p.className = 'student-loading';
-        p.textContent = `사건 ${event.id}에 대한 AI 설명 요청 중입니다…`;
-        root.appendChild(p);
-        return root;
-      }
-
-      if (status === 'error') {
+      // 1. explanation.status === 'error'는 event가 null이어도 최우선 처리
+      if (explanation?.status === 'error') {
         const safeCode = explanation.error?.code || '확인 불가';
         const safeMessage = explanation.error?.message || 'AI 설명 요청에 실패했습니다.';
+
+        root.setAttribute('data-student-explanation-error', safeCode);
+
+        const h4 = document.createElement('h4');
+        h4.textContent = event ? `사건 ${event.id} AI 설명 실패` : 'AI 설명 실패';
+        root.appendChild(h4);
 
         const pErr = document.createElement('p');
         pErr.className = 'student-error';
@@ -1192,24 +1181,222 @@ export function createStudentView() {
         pPreserved.className = 'student-preserved-note muted';
         pPreserved.textContent = '기록은 그대로 유지됩니다.';
         root.appendChild(pPreserved);
-        // 오류 상태이므로 data-student-explanation-event 속성을 붙이지 않고 반환
+
+        // 오류이므로 data-student-explanation-event 속성을 붙이지 않고 반환
         return root;
       }
 
+      // 2. 오류가 아닌데 event가 없는 경우
+      if (!event) {
+        const p = document.createElement('p');
+        p.className = 'student-empty muted';
+        p.textContent = '보안 기록에서 기록을 먼저 고르세요.';
+        root.appendChild(p);
+        return root;
+      }
+
+      const status = explanation?.status;
+
+      // 3. loading 상태
+      if (status === 'loading') {
+        const p = document.createElement('p');
+        p.className = 'student-loading';
+        p.textContent = `사건 ${event.id}에 대한 AI 설명 요청 중입니다…`;
+        root.appendChild(p);
+        return root;
+      }
+
+      // 4. ok 상태 (상세 검증 및 렌더링)
       if (status === 'ok') {
-        // 성공일 때만 바깥 요소에 data-student-explanation-event 속성으로 event.id 부여
+        const data = explanation?.data;
+
+        // Helper: 쓸 수 없는 설명 (unusable) 거절 함수
+        const rejectUnusable = (reason) => {
+          root.setAttribute('data-student-unusable-explanation', 'true');
+
+          const h4 = document.createElement('h4');
+          h4.textContent = `사건 ${event.id} 쓸 수 없는 설명(unusable)`;
+          root.appendChild(h4);
+
+          const pReason = document.createElement('p');
+          pReason.className = 'student-error';
+          pReason.style.color = '#c5221f';
+          pReason.textContent = `쓸 수 없는 설명(unusable): ${reason}`;
+          root.appendChild(pReason);
+
+          const pPreserved = document.createElement('p');
+          pPreserved.className = 'student-preserved-note muted';
+          pPreserved.textContent = '원본 기록은 그대로 유지됩니다.';
+          root.appendChild(pPreserved);
+
+          // data-student-explanation-event 속성은 절대 붙이지 않음
+          return root;
+        };
+
+        // (1) data 유효성 검사 (null, 배열, 비객체 차단)
+        if (!data || typeof data !== 'object' || Array.isArray(data)) {
+          return rejectUnusable('응답 데이터 형식이 올바르지 않습니다.');
+        }
+
+        // (2) summary 검사
+        if (typeof data.summary !== 'string' || data.summary.trim().length === 0) {
+          return rejectUnusable('요약 내용이 없거나 올바르지 않습니다.');
+        }
+
+        // (3) executed 검사 (AI가 이미 실행했다고 답한 설명은 거절)
+        if (data.executed === true) {
+          return rejectUnusable('AI가 이미 실행했다고 답한 설명은 쓸 수 없습니다.');
+        }
+
+        // (4) requiresHumanConfirmation 검사
+        if (data.requiresHumanConfirmation !== true) {
+          return rejectUnusable('사람 확인이 필요하지 않다고 명시된 설명은 쓸 수 없습니다.');
+        }
+
+        // (5) evidenceIds 검사 (배열 여부 및 비어있는지)
+        if (!Array.isArray(data.evidenceIds) || data.evidenceIds.length === 0) {
+          return rejectUnusable('인용한 근거 ID가 없습니다.');
+        }
+
+        // event.evidence 대조
+        const eventEvidenceMap = new Map();
+        if (Array.isArray(event.evidence)) {
+          for (const e of event.evidence) {
+            if (e && typeof e.id === 'string') {
+              eventEvidenceMap.set(e.id, e.text || '');
+            }
+          }
+        }
+
+        // 모든 evidenceId가 event.evidence에 존재하는지 검사
+        for (const ref of data.evidenceIds) {
+          if (!eventEvidenceMap.has(ref)) {
+            return rejectUnusable(`인용한 근거 ID(${ref})가 이 기록의 근거에 존재하지 않습니다.`);
+          }
+        }
+
+        // (6) proposals 검사
+        if (!Array.isArray(data.proposals)) {
+          return rejectUnusable('조치 제안 목록 형식이 올바르지 않습니다.');
+        }
+
+        const supportedActions = Array.isArray(event.supportedActions) ? event.supportedActions : [];
+        for (const prop of data.proposals) {
+          if (!prop || typeof prop.action !== 'string') {
+            return rejectUnusable('조치 제안 형식이 올바르지 않습니다.');
+          }
+          if (!supportedActions.includes(prop.action)) {
+            return rejectUnusable(`기록의 연동 시스템이 지원하지 않는 조치(${prop.action})가 제안되었습니다.`);
+          }
+        }
+
+        // --- 모든 검증 통과: 성공 표식 부여 및 정상 렌더링 ---
         root.setAttribute('data-student-explanation-event', event.id);
 
         const h4 = document.createElement('h4');
-        h4.textContent = `사건 ${event.id} AI 설명`;
+        h4.textContent = `사건 ${event.id} AI 설명(참고용)`;
         root.appendChild(h4);
 
-        const summary = explanation.data?.summary || '요약 확인 불가';
         const pSummary = document.createElement('p');
         pSummary.className = 'student-explanation-summary';
-        pSummary.textContent = summary;
+        pSummary.textContent = data.summary;
         root.appendChild(pSummary);
 
+        // 1) 인용한 근거 목록
+        const h5Evidence = document.createElement('h5');
+        h5Evidence.textContent = '인용한 근거 목록';
+        root.appendChild(h5Evidence);
+
+        const ulEvidence = document.createElement('ul');
+        for (const ref of data.evidenceIds) {
+          const li = document.createElement('li');
+          li.textContent = `${ref} — ${eventEvidenceMap.get(ref)}`;
+          ulEvidence.appendChild(li);
+        }
+        root.appendChild(ulEvidence);
+
+        // 2) 현재 규칙 목록
+        const h5Rules = document.createElement('h5');
+        h5Rules.textContent = '현재 규칙 목록';
+        root.appendChild(h5Rules);
+
+        const ulRules = document.createElement('ul');
+        const rulesList = Array.isArray(event.rules) ? event.rules : [];
+        if (rulesList.length === 0) {
+          const pNoRules = document.createElement('p');
+          pNoRules.className = 'muted';
+          pNoRules.textContent = '적용된 규칙 없음';
+          root.appendChild(pNoRules);
+        } else {
+          for (const rule of rulesList) {
+            const li = document.createElement('li');
+            li.textContent = `${rule.id} — ${rule.text || ''}`;
+            ulRules.appendChild(li);
+          }
+          root.appendChild(ulRules);
+        }
+
+        // 3) 확인되지 않은 현재 상태 (access, session, device)
+        const h5Unknown = document.createElement('h5');
+        h5Unknown.textContent = '확인되지 않은 현재 상태';
+        root.appendChild(h5Unknown);
+
+        const stateObj = event.state || {};
+        const unknownList = [];
+        if (stateObj.access === 'unknown') unknownList.push('접속: 확인 불가(unknown)');
+        if (stateObj.session === 'unknown') unknownList.push('세션: 확인 불가(unknown)');
+        if (stateObj.device === 'unknown') unknownList.push('기기: 확인 불가(unknown)');
+
+        if (unknownList.length === 0) {
+          const pNoUnknown = document.createElement('p');
+          pNoUnknown.className = 'muted';
+          pNoUnknown.textContent = '없음';
+          root.appendChild(pNoUnknown);
+        } else {
+          const ulUnknown = document.createElement('ul');
+          for (const item of unknownList) {
+            const li = document.createElement('li');
+            li.textContent = item;
+            ulUnknown.appendChild(li);
+          }
+          root.appendChild(ulUnknown);
+
+          const pUnknownWarn = document.createElement('p');
+          pUnknownWarn.className = 'muted';
+          pUnknownWarn.textContent = '확인할 수 없는 상태를 정상이나 안전으로 판단하지 않습니다.';
+          root.appendChild(pUnknownWarn);
+        }
+
+        // 4) 조치 제안 (proposals)
+        const h5Proposals = document.createElement('h5');
+        h5Proposals.textContent = '조치 제안';
+        root.appendChild(h5Proposals);
+
+        if (data.proposals.length === 0) {
+          const pNoProp = document.createElement('p');
+          pNoProp.className = 'muted';
+          if (supportedActions.length === 0) {
+            pNoProp.textContent = '연동 시스템이 지원하는 조치가 없어 제안이 없습니다(정상).';
+          } else {
+            pNoProp.textContent = 'AI가 제안한 조치가 없습니다.';
+          }
+          root.appendChild(pNoProp);
+        } else {
+          const ulProposals = document.createElement('ul');
+          for (const prop of data.proposals) {
+            const li = document.createElement('li');
+            li.textContent = `${prop.action} — ${prop.reason || '이유 없음'}`;
+            ulProposals.appendChild(li);
+          }
+          root.appendChild(ulProposals);
+
+          const pPropNotice = document.createElement('p');
+          pPropNotice.className = 'muted';
+          pPropNotice.textContent = '사람 확인이 필요하며 아직 실행되지 않았습니다. 연동 시스템에서 지원하지 않으면 집행할 수 없습니다.';
+          root.appendChild(pPropNotice);
+        }
+
+        // 5) 점검 시각 및 안내 고지
         if (checkedAt) {
           const pTime = document.createElement('p');
           pTime.className = 'muted';
@@ -1219,13 +1406,13 @@ export function createStudentView() {
 
         const pNotice = document.createElement('p');
         pNotice.className = 'muted';
-        pNotice.textContent = '이 설명은 AI의 참고용 해석이며, 사실 판단은 사건의 근거와 현재 상태를 기준으로 하세요.';
+        pNotice.textContent = 'AI 설명은 참고용 해석이며, 사실 판단은 인용한 근거와 원천이 알려 준 현재 상태를 기준으로 하세요.';
         root.appendChild(pNotice);
 
         return root;
       }
 
-      // idle 또는 기타 상태
+      // 5. idle 및 기타 상태
       const p = document.createElement('p');
       p.className = 'student-idle muted';
       p.textContent = `사건 ${event.id}에 대한 AI 설명 대기 중`;
