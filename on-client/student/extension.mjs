@@ -229,7 +229,152 @@ export function createStudentView() {
 
       return root;
     },
-    renderDecision() { return '학생 구현 대기: 서버의 판정과 이유를 연결하세요.'; },
+    renderDecision({ status, mode, data, error, appId } = {}) {
+      const formatDecision = (dec) => {
+        if (dec === 'allow') return '접근 허용(allow)';
+        if (dec === 'deny') return '접근 거부(deny)';
+        if (dec === 'challenge') return '추가 확인 필요(challenge)';
+        return '확인 불가(unknown)';
+      };
+
+      const root = document.createElement('div');
+      root.className = 'student-decision';
+
+      // 1. 요청 전 (idle)
+      if (status === 'idle') {
+        const p = document.createElement('p');
+        p.className = 'student-idle muted';
+        p.textContent = '앱을 골라 접속을 요청하세요';
+        root.appendChild(p);
+        return root;
+      }
+
+      // 2. 요청 중 (loading)
+      if (status === 'loading') {
+        const p = document.createElement('p');
+        p.className = 'student-loading';
+        p.textContent = '판정 확인 중';
+        root.appendChild(p);
+        return root;
+      }
+
+      // 3. 요청 실패 (error)
+      if (status === 'error') {
+        const errorBox = document.createElement('div');
+        errorBox.className = 'student-error-box';
+
+        const pTitle = document.createElement('p');
+        pTitle.className = 'student-error';
+        pTitle.style.color = '#c5221f';
+        pTitle.style.fontWeight = 'bold';
+        const msg = error?.message ? `: ${error.message}` : '';
+        pTitle.textContent = `요청 실패${msg}`;
+        errorBox.appendChild(pTitle);
+
+        const pNote = document.createElement('p');
+        pNote.className = 'student-error-note muted';
+        pNote.textContent = '안내: 이것은 접근 거부 판정이 아닙니다. 서버와의 통신에 실패했습니다.';
+        errorBox.appendChild(pNote);
+
+        if (appId) {
+          const pApp = document.createElement('p');
+          pApp.className = 'student-target-app';
+          pApp.textContent = `대상 앱 ID: ${appId}`;
+          errorBox.appendChild(pApp);
+        }
+
+        root.appendChild(errorBox);
+        return root;
+      }
+
+      // 4. 판정 수신 (ok)
+      if (status === 'ok' && data) {
+        const decision = data.decision;
+        const isAllow = decision === 'allow';
+        const isDeny = decision === 'deny';
+        const isChallenge = decision === 'challenge';
+        const isUnknown = !isAllow && !isDeny && !isChallenge;
+
+        const resultBox = document.createElement('div');
+        resultBox.className = 'student-decision-result';
+
+        // 판정 결과 (텍스트 및 색상)
+        const pDecision = document.createElement('p');
+        pDecision.className = 'student-decision-status';
+        pDecision.style.fontSize = '1.1rem';
+        pDecision.style.fontWeight = 'bold';
+        const decisionText = formatDecision(decision);
+        pDecision.textContent = `판정 결과: ${decisionText}`;
+
+        if (isAllow) {
+          pDecision.style.color = '#137333';
+        } else if (isDeny) {
+          pDecision.style.color = '#c5221f';
+        } else if (isChallenge) {
+          pDecision.style.color = '#b06000';
+        } else {
+          pDecision.style.color = '#5f6368';
+        }
+        resultBox.appendChild(pDecision);
+
+        // challenge 안내
+        if (isChallenge) {
+          const pChallengeNotice = document.createElement('p');
+          pChallengeNotice.className = 'student-challenge-notice';
+          pChallengeNotice.style.color = '#b06000';
+          pChallengeNotice.textContent = '안내: 이 앱이 추가 인증·확인 절차를 대신 수행하지 않습니다.';
+          resultBox.appendChild(pChallengeNotice);
+        }
+
+        // unknown 안내 (허용으로 보이지 않게)
+        if (isUnknown) {
+          const pUnknownNotice = document.createElement('p');
+          pUnknownNotice.className = 'student-unknown-notice';
+          pUnknownNotice.style.color = '#c5221f';
+          pUnknownNotice.textContent = '안내: 확인 불가 판정은 접근이 허용된 것이 아닙니다.';
+          resultBox.appendChild(pUnknownNotice);
+        }
+
+        // 세부 항목 (앱 ID, reason, checkedAt)
+        const dl = document.createElement('dl');
+        dl.className = 'kv';
+
+        // 업무 앱 ID
+        const dtApp = document.createElement('dt');
+        dtApp.textContent = '업무 앱 ID';
+        const ddApp = document.createElement('dd');
+        ddApp.textContent = data.appId || appId || '확인 불가';
+        dl.appendChild(dtApp);
+        dl.appendChild(ddApp);
+
+        // 판정 이유 (reason)
+        const dtReason = document.createElement('dt');
+        dtReason.textContent = '판정 이유';
+        const ddReason = document.createElement('dd');
+        ddReason.textContent = data.reason || '사유 없음';
+        dl.appendChild(dtReason);
+        dl.appendChild(ddReason);
+
+        // 판정 시각 (checkedAt)
+        const dtTime = document.createElement('dt');
+        dtTime.textContent = '판정 시각';
+        const ddTime = document.createElement('dd');
+        ddTime.textContent = data.checkedAt || '확인 불가';
+        dl.appendChild(dtTime);
+        dl.appendChild(ddTime);
+
+        resultBox.appendChild(dl);
+        root.appendChild(resultBox);
+        return root;
+      }
+
+      // 5. 기타 예외 상황
+      const pFallback = document.createElement('p');
+      pFallback.className = 'student-fallback';
+      pFallback.textContent = '확인 불가(unknown): 판정 상태를 확인할 수 없습니다.';
+      root.appendChild(pFallback);
+      return root;
+    },
     renderEvents() { return '학생 구현 대기: 본인 접속·XDR 기록을 연결하세요.'; },
     renderStatus() { return '학생 구현 대기: 기기·세션·알림과 연결 점검 상태를 구분하세요.'; },
     renderVulnerabilities() { return '학생 구현 대기: 정확한 설치 버전·OSV 출처·조회 시각·부분 결과·조회 실패를 구분하세요.'; },
