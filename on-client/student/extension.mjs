@@ -1420,6 +1420,51 @@ export function createStudentView() {
 
       return root;
     },
-    renderAction() { return '학생 구현 대기: 현재 사건·조치·실제 대상·사람 확인·ACK와 원천 효과·unknown을 구분하세요.'; },
+    renderAction({ status = 'idle', event, actionId, target, receipt, observation, message, confirmationExpiresAt, error } = {}) {
+      const root = document.createElement('div');
+      const line = (text) => {
+        const p = document.createElement('p');
+        p.textContent = text;
+        root.appendChild(p);
+      };
+      const confirmed = status === 'succeeded' && observation?.effectApplied === true;
+      const effectiveStatus = status === 'succeeded' && !confirmed ? 'unknown' : status;
+      const labels = {
+        idle: '아직 미실행(idle). AI 조치 제안은 실행되지 않았습니다.',
+        loading: '조회 또는 조치 준비 중(loading). 실행 결과는 아직 확인되지 않았습니다.',
+        prepared: '준비됨(prepared) · 아직 미실행. 제공 화면에서 사람이 현재 대상과 조치를 직접 확인한 뒤에만 실행합니다.',
+        executing: '서버에 전달 중(executing). 결과는 아직 확인되지 않았으며 완료가 아닙니다.',
+        pending: '서버 접수·처리 중(pending). 서버가 받았다는 ACK는 실제 효과가 아닙니다. 결과는 아직 확인되지 않았습니다.',
+        succeeded: '원천 관측으로 실제 효과 확인(succeeded).',
+        denied: '원천 거절(denied).',
+        failed: '처리 실패(failed).',
+        unknown: '결과 불명(unknown). 성공이나 효과 없음으로 단정하지 마세요. 재실행 대신 제공 화면의 「원천 결과만 재조회」를 사용하세요.',
+        expired: '확인 기한 지남(expired). 현재 사건과 대상을 다시 확인하고 조치를 다시 준비하세요.',
+        error: '요청 처리 안 됨(error).'
+      };
+      line(labels[effectiveStatus] || labels.unknown);
+      if (message) line(message);
+      if (error) line(`${error.code || '확인 불가'}: ${error.message || '확인 불가'}`);
+      if (event?.id) line(`사건 ID: ${event.id}`);
+      for (const evidence of event?.evidence || []) {
+        if (evidence?.id) line(`근거 ID: ${evidence.id}`);
+      }
+      if (actionId) line(`조치 ID: ${actionId}`);
+      if (target?.id) line(`실제 대상 ID: ${target.id} · 세대: ${target.generation ?? '확인 불가'}`);
+      if (confirmationExpiresAt) line(`사람 확인 기한: ${confirmationExpiresAt}`);
+      for (const field of ['requestId', 'receiptId', 'version', 'replayed', 'superseded']) {
+        if (receipt?.[field] !== undefined) line(`${field}: ${receipt[field]}`);
+      }
+      if (observation) {
+        line(`원천 관측 시각: ${observation.observedAt ?? '확인 불가'}`);
+        line(`effectApplied: ${observation.effectApplied ?? '확인 불가'}`);
+      }
+      if (!['idle', 'error'].includes(effectiveStatus) && labels[effectiveStatus]) {
+        if (event?.id) root.setAttribute('data-student-action-event', event.id);
+        if (receipt?.requestId) root.setAttribute('data-student-action-request', receipt.requestId);
+      }
+      line('버튼 조작은 제공 화면에서 직접 진행하세요. 학생 표시는 조치를 실행하지 않습니다.');
+      return root;
+    },
   };
 }
